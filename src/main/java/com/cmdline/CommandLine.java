@@ -10,7 +10,9 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.*;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.util.*;
+import java.util.stream.*;
 
 abstract class AbstractCommand {
     protected String command = "";
@@ -25,7 +27,7 @@ abstract class AbstractCommand {
     }
 
     //DO NOT FORGET ADD COMMAND CLASS TO THIS MAP<CommandString, CommandClass>
-    protected static Map<String, Class<? extends AbstractCommand>> mapOfCommands = new HashMap<>();
+    protected static Map<String, Class<? extends AbstractCommand>> mapOfCommands = new LinkedHashMap<>();
     static {
         mapOfCommands.put("noSuchCommand", NoSuchCommand.class);
         mapOfCommands.put("exit", ExitCommand.class);
@@ -228,6 +230,19 @@ class RemoveCommand extends AbstractCommand {
     @Override
     public String execute(Path currentAbsolutePath) {
         if(args.length > 0) {
+            if(args[0].equals("-R") && args.length > 1) {
+                Path removePath = currentAbsolutePath.resolve(args[1]);
+                if(Files.exists(removePath)) {
+                    try {
+                        Files.walkFileTree(removePath, new RecursiveRemoveFileVisitor());
+                        return "";
+                    } catch (IOException e) {
+                        return "Error with recursive removing of: " + args[1] + "! (" + e.getMessage() + ")";
+                    }
+                } else {
+                    return "No such file or directory!";
+                }
+            }
             Path removePath = currentAbsolutePath.resolve(args[0]);
             try {
                 Files.deleteIfExists(removePath);
@@ -241,7 +256,29 @@ class RemoveCommand extends AbstractCommand {
 
     @Override
     public String showUsage() {
-        return "Press \"remove <file or directory>\" to remove file or directory";
+        return "Press \"remove <file or directory>\" to remove file or directory" +
+               "\n or remove -R <file or directory> to remove recursively";
+    }
+
+    static class RecursiveRemoveFileVisitor extends SimpleFileVisitor<Path> {
+        @Override
+        public FileVisitResult visitFile(Path path, BasicFileAttributes basicFileAttributes) throws IOException {
+            if(!basicFileAttributes.isDirectory()) {
+                Files.delete(path);
+            }
+            return FileVisitResult.CONTINUE;
+        }
+
+        @Override
+        public FileVisitResult postVisitDirectory(Path dirPath, IOException exc) throws IOException {
+            if(exc == null) {
+                Files.delete(dirPath);
+                return FileVisitResult.CONTINUE;
+            } else {
+                System.out.println(exc.getMessage());
+                return FileVisitResult.TERMINATE;
+            }
+        }
     }
 }
 
@@ -251,12 +288,21 @@ class CopyCommand extends AbstractCommand {
         if(args.length > 1) {
             Path srcPath = currentAbsolutePath.resolve(args[0]);
             Path dstPath = currentAbsolutePath.resolve(args[1]);
+
             try {
-                Files.copy(srcPath, dstPath);
-                return "";
+                try (Stream<Path> stream = Files.walk(srcPath)) {
+                    stream.forEach(source -> {
+                        try {
+                            Files.copy(source, dstPath.resolve(srcPath.relativize(source)));
+                        } catch (IOException e) {
+                            e.printStackTrace();
+                        }
+                    });
+                }
             } catch (IOException e) {
-                return "Error with copying: " + args[0] + " -> " + args[1];
+                e.printStackTrace();
             }
+            return "";
         }
         return showUsage();
     }
