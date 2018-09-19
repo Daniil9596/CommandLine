@@ -1,6 +1,5 @@
 package com.cmdline;
 
-import org.apache.commons.compress.archivers.*;
 import org.apache.commons.compress.archivers.zip.ZipArchiveEntry;
 import org.apache.commons.compress.archivers.zip.ZipArchiveInputStream;
 import org.apache.commons.compress.archivers.zip.ZipArchiveOutputStream;
@@ -11,6 +10,12 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.*;
 import java.nio.file.attribute.BasicFileAttributes;
+
+import java.time.DayOfWeek;
+import java.time.LocalDate;
+import java.time.format.DateTimeFormatter;
+import java.time.format.TextStyle;
+
 import java.util.*;
 import java.util.stream.*;
 
@@ -26,7 +31,7 @@ abstract class AbstractCommand {
         this.args = args;
     }
 
-    //DO NOT FORGET ADD COMMAND CLASS TO THIS MAP<CommandString, CommandClass>
+    //DO NOT FORGET TO ADD COMMAND CLASSES TO THIS MAP<CommandString, CommandClass>
     protected static Map<String, Class<? extends AbstractCommand>> mapOfCommands = new LinkedHashMap<>();
     static {
         mapOfCommands.put("noSuchCommand", NoSuchCommand.class);
@@ -42,6 +47,9 @@ abstract class AbstractCommand {
         mapOfCommands.put("move", MoveCommand.class);
         mapOfCommands.put("print", PrintCommand.class);
         mapOfCommands.put("archive", ArchiveCommand.class);
+        mapOfCommands.put("find", FindCommand.class);
+        mapOfCommands.put("fileTree", ShowFileTreeCommand.class);
+        mapOfCommands.put("calendar", CalendarCommand.class);
     }
 
     abstract public String execute(Path currentAbsolutePath);
@@ -55,6 +63,7 @@ abstract class AbstractCommand {
                 AbstractCommand commandInstance = null;
                 try {
                     commandInstance = commandClass.newInstance();
+                    commandInstance.setCommand(cmdWithArgs[0]);
                     commandInstance.setArgs(Arrays.copyOfRange(cmdWithArgs, 1, cmdWithArgs.length));
                 } catch (InstantiationException | IllegalAccessException e) {
                     e.printStackTrace();
@@ -361,6 +370,109 @@ class PrintCommand extends AbstractCommand {
     }
 }
 
+class FindCommand extends AbstractCommand {
+    @Override
+    public String execute(Path currentAbsolutePath) {
+        if(args.length > 1) {
+            Path findRootPath = currentAbsolutePath.resolve(args[0]);
+            PathMatcher pathMatcher = FileSystems.getDefault().getPathMatcher("glob:" + args[1]);
+            try {
+                try (Stream<Path> stream = Files.walk(findRootPath)) {
+                    stream.forEach(file -> {
+                        if (pathMatcher.matches(file.getFileName())) {
+                            System.out.println(file.toAbsolutePath().normalize());
+                        }
+                    });
+                }
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+            return "";
+        }
+        return showUsage();
+    }
+
+    @Override
+    public String showUsage() {
+        return "Press \"find <root directory> <wildcard>\" to find all files and directories\n" +
+               " starting on root directory" +
+               " wildcard: '*' - any symbol sequence, '?' - any one symbol, '{wildcard1, ...}' - group of subpatterns";
+    }
+}
+
+class ShowFileTreeCommand extends AbstractCommand {
+    @Override
+    public String execute(Path currentAbsolutePath) {
+        if(args.length > 0) {
+            Path rootTreePath = currentAbsolutePath.resolve(args[0]);
+            try {
+                try (Stream<Path> stream = Files.walk(rootTreePath)) {
+                    stream.forEach(file -> {
+                        if(!file.equals(rootTreePath)) {
+                            System.out.print(getIndent(rootTreePath, file) + "\u21B3");
+                        }
+                        System.out.println(file.getFileName());
+                    });
+                }
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+            return "";
+        }
+        return showUsage();
+    }
+
+    @Override
+    public String showUsage() {
+        return "Press \"fileTree <root directory>\" to show file tree";
+    }
+
+    private String getIndent(Path rootPath, Path currentPath) {
+        String res = "";
+        for (int i = 0; i < rootPath.relativize(currentPath).getNameCount(); ++i) {
+            res += "  ";
+        }
+        return res;
+    }
+}
+
+class CalendarCommand extends AbstractCommand {
+    @Override
+    public String execute(Path currentAbsolutePath) {
+        LocalDate currentDate = LocalDate.now();
+        LocalDate start = currentDate.minusDays(currentDate.getDayOfMonth() - 1);
+        LocalDate end = start.plusMonths(1);
+
+        System.out.println("Today is: " + currentDate.format(DateTimeFormatter.ofPattern("dd MMMM yyyy")) + "\n");
+
+        for(DayOfWeek day : DayOfWeek.values()) {
+            System.out.print(" " + day.getDisplayName(TextStyle.SHORT, Locale.getDefault()));
+        }
+        System.out.println();
+
+        for(LocalDate day = start.minusDays(start.getDayOfWeek().ordinal()); day.isBefore(end); day = day.plusDays(1)) {
+            if(day.isBefore(start)) {
+                System.out.print("    ");
+            } else {
+                if(day.isEqual(currentDate)) {
+                    System.out.printf("[%2d]", day.getDayOfMonth());
+                } else {
+                    System.out.printf(" %2d ", day.getDayOfMonth());
+                }
+                if(day.getDayOfWeek() == DayOfWeek.SUNDAY) {
+                    System.out.println();
+                }
+            }
+        }
+        return "";
+    }
+
+    @Override
+    public String showUsage() {
+        return "Press \"calendar\" to show current month";
+    }
+}
+
 class ArchiveCommand extends AbstractCommand {
     @Override
     public String execute(Path currentAbsolutePath) {
@@ -482,7 +594,6 @@ class ArchiveCommand extends AbstractCommand {
 //--------------------------------------------------------------------
 
 public class CommandLine {
-    //private List<AbstractCommand> commandHistory = new LinkedList<>();
     private static Path currentAbsolutePath = Paths.get(".").toAbsolutePath().normalize();
 
     private static void setCurrentAbsolutePath(String strPath) {
